@@ -12,31 +12,33 @@ dp = Dispatcher(bot)
 # Хранилище токенов
 TOKENS = {}
 
-async def get_price(address):
-    url = f"https://public-api.birdeye.so/public/price?address={address}"
+# Получение marketcap токена
+async def get_marketcap(address):
+    url = f"https://public-api.birdeye.so/public/token?address={address}"
     headers = {"x-api-key": BIRDEYE_API_KEY}
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as resp:
             data = await resp.json()
-            return data["data"]["value"]
+            return data["data"]["marketCap"]
 
+# Основной мониторинг
 async def monitor(chat_id):
     while True:
         for address, token in TOKENS.items():
-            price = await get_price(address)
+            mc = await get_marketcap(address)
 
-            # Если ATH ещё не установлен — ставим текущую цену как ATH
-            if token["ath"] is None:
-                token["ath"] = price
+            # Если ATH ещё не установлен — ставим текущий marketcap как ATH
+            if token["ath_mc"] is None:
+                token["ath_mc"] = mc
                 continue
 
-            # Если цена выросла выше ATH — обновляем ATH
-            if price > token["ath"]:
-                token["ath"] = price
+            # Если marketcap вырос — обновляем ATH
+            if mc > token["ath_mc"]:
+                token["ath_mc"] = mc
                 token["triggered"] = set()  # сбрасываем алерты
 
-            # Падение от ATH
-            drop = (token["ath"] - price) / token["ath"]
+            # Падение от ATH marketcap
+            drop = (token["ath_mc"] - mc) / token["ath_mc"]
 
             for threshold in token["alerts"]:
                 if drop >= threshold and threshold not in token["triggered"]:
@@ -44,15 +46,15 @@ async def monitor(chat_id):
 
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ Токен {address} упал на {int(threshold*100)}% от ATH\n"
-                        f"ATH: {token['ath']}\n"
-                        f"Текущая цена: {price}"
+                        f"⚠️ Токен {address} упал на {int(threshold*100)}% от ATH MarketCap\n"
+                        f"ATH MarketCap: {token['ath_mc']}\n"
+                        f"Текущий MarketCap: {mc}"
                     )
 
         await asyncio.sleep(10)
 
 # -----------------------------
-#        КОМАНДА /add
+#        /add
 # -----------------------------
 @dp.message_handler(commands=["add"])
 async def add_token(msg: types.Message):
@@ -60,17 +62,42 @@ async def add_token(msg: types.Message):
         address = msg.text.split()[1]
 
         TOKENS[address] = {
-            "ath": None,
+            "ath_mc": None,  # ATH marketcap
             "alerts": [0.60, 0.65, 0.70, 0.80],
             "triggered": set()
         }
 
-        await msg.answer(f"Токен добавлен!\nНачинаю отслеживать падение от ATH: {address}")
+        await msg.answer(f"Токен добавлен!\nОтслеживаю падение по MarketCap: {address}")
     except:
         await msg.answer("Использование:\n/add <contract_address>")
 
 # -----------------------------
-#        КОМАНДА /list
+#        /remove
+# -----------------------------
+@dp.message_handler(commands=["remove"])
+async def remove_token(msg: types.Message):
+    try:
+        address = msg.text.split()[1]
+
+        if address in TOKENS:
+            del TOKENS[address]
+            await msg.answer(f"Токен {address} удалён.")
+        else:
+            await msg.answer("Такого токена нет в списке.")
+    except:
+        await msg.answer("Использование:\n/remove <contract_address>")
+
+# -----------------------------
+#        /reset
+# -----------------------------
+@dp.message_handler(commands=["reset"])
+async def reset_alerts(msg: types.Message):
+    for token in TOKENS.values():
+        token["triggered"] = set()
+    await msg.answer("Все алерты сброшены!")
+
+# -----------------------------
+#        /list
 # -----------------------------
 @dp.message_handler(commands=["list"])
 async def list_tokens(msg: types.Message):
@@ -80,37 +107,12 @@ async def list_tokens(msg: types.Message):
 
     text = "Отслеживаемые токены:\n\n"
     for address, token in TOKENS.items():
-        text += f"• {address} (ATH: {token['ath']})\n"
+        text += f"• {address} (ATH MarketCap: {token['ath_mc']})\n"
 
     await msg.answer(text)
 
 # -----------------------------
-#        КОМАНДА /remove
-# -----------------------------
-@dp.message_handler(commands=["remove"])
-async def remove_token(msg: types.Message):
-    try:
-        address = msg.text.split()[1]
-
-        if address in TOKENS:
-            del TOKENS[address]
-            await msg.answer(f"Токен {address} удалён из отслеживания.")
-        else:
-            await msg.answer("Такого токена нет в списке.")
-    except:
-        await msg.answer("Использование:\n/remove <contract_address>")
-
-# -----------------------------
-#        КОМАНДА /reset
-# -----------------------------
-@dp.message_handler(commands=["reset"])
-async def reset_alerts(msg: types.Message):
-    for token in TOKENS.values():
-        token["triggered"] = set()
-    await msg.answer("Все алерты сброшены!")
-
-# -----------------------------
-#        КОМАНДА /commands
+#        /commands
 # -----------------------------
 @dp.message_handler(commands=["commands"])
 async def commands(msg: types.Message):
@@ -125,7 +127,7 @@ async def commands(msg: types.Message):
     await msg.answer(text)
 
 # -----------------------------
-#        КОМАНДА /start
+#        /start
 # -----------------------------
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
