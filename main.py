@@ -21,6 +21,15 @@ async def get_marketcap(address):
             data = await resp.json()
             return data["data"]["marketCap"]
 
+# Получение имени токена
+async def get_token_name(address):
+    url = f"https://public-api.birdeye.so/public/token?address={address}"
+    headers = {"x-api-key": BIRDEYE_API_KEY}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            data = await resp.json()
+            return data["data"]["name"]
+
 # Основной мониторинг
 async def monitor(chat_id):
     while True:
@@ -46,7 +55,7 @@ async def monitor(chat_id):
 
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ Токен {address} упал на {int(threshold*100)}% от ATH MarketCap\n"
+                        f"⚠️ {token['name']} упал на {int(threshold*100)}% от ATH MarketCap\n"
                         f"ATH MarketCap: {token['ath_mc']}\n"
                         f"Текущий MarketCap: {mc}"
                     )
@@ -61,13 +70,16 @@ async def add_token(msg: types.Message):
     try:
         address = msg.text.split()[1]
 
+        name = await get_token_name(address)
+
         TOKENS[address] = {
-            "ath_mc": None,  # ATH marketcap
+            "name": name,
+            "ath_mc": None,
             "alerts": [0.60, 0.65, 0.70, 0.80],
             "triggered": set()
         }
 
-        await msg.answer(f"Токен добавлен!\nОтслеживаю падение по MarketCap: {address}")
+        await msg.answer(f"Токен {name} добавлен!\nОтслеживаю падение по MarketCap.")
     except:
         await msg.answer("Использование:\n/add <contract_address>")
 
@@ -80,8 +92,9 @@ async def remove_token(msg: types.Message):
         address = msg.text.split()[1]
 
         if address in TOKENS:
+            name = TOKENS[address]["name"]
             del TOKENS[address]
-            await msg.answer(f"Токен {address} удалён.")
+            await msg.answer(f"Токен {name} удалён.")
         else:
             await msg.answer("Такого токена нет в списке.")
     except:
@@ -107,7 +120,7 @@ async def list_tokens(msg: types.Message):
 
     text = "Отслеживаемые токены:\n\n"
     for address, token in TOKENS.items():
-        text += f"• {address} (ATH MarketCap: {token['ath_mc']})\n"
+        text += f"• {token['name']} (ATH MarketCap: {token['ath_mc']})\n"
 
     await msg.answer(text)
 
@@ -139,5 +152,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
