@@ -11,7 +11,7 @@ TOKENS = {}
 
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
 
-# Fetch best pair from DexScreener (Robinhood chain)
+# Fetch best pair from DexScreener
 async def fetch_best_pair(address):
     async with aiohttp.ClientSession() as session:
         async with session.get(DEX_URL + address) as resp:
@@ -20,13 +20,9 @@ async def fetch_best_pair(address):
     if "pairs" not in data or not data["pairs"]:
         return None
 
-    # Filter only Robinhood chain (chainId 2021)
-    pairs = [p for p in data["pairs"] if str(p.get("chainId")) == "2021"]
+    pairs = data["pairs"]
 
-    if not pairs:
-        return None
-
-    # Sort by liquidity, volume, holders (descending)
+    # Sort by liquidity, volume, holders
     pairs.sort(
         key=lambda p: (
             p.get("liquidity", 0),
@@ -71,7 +67,7 @@ async def monitor(chat_id):
 
             for threshold in token["alerts"]:
 
-                # AUTO-REARM: if marketcap recovered above threshold
+                # AUTO-REARM
                 if drop < threshold and threshold in token["triggered"]:
                     token["triggered"].remove(threshold)
 
@@ -121,14 +117,24 @@ async def add_token(msg: types.Message):
     parts = msg.text.split()
 
     if len(parts) < 2:
-        await msg.answer("Usage:\n/add <contract_address>")
+        await msg.answer("Usage:\n/add <contract_or_link>")
         return
 
-    address = parts[1]
+    raw = parts[1]
+
+    # If user sends DexScreener link — extract contract
+    if "dexscreener.com" in raw:
+        try:
+            address = raw.split("/")[-1]
+        except:
+            await msg.answer("Invalid DexScreener link.")
+            return
+    else:
+        address = raw
 
     pair = await fetch_best_pair(address)
     if not pair:
-        await msg.answer("Token not found on DexScreener (Robinhood chain).")
+        await msg.answer("Token not found on DexScreener.")
         return
 
     name = pair["baseToken"]["name"]
@@ -189,7 +195,7 @@ async def list_tokens(msg: types.Message):
 async def commands(msg: types.Message):
     await msg.answer(
         "/start – start monitoring\n"
-        "/add <address> – add token\n"
+        "/add <address_or_link> – add token\n"
         "/remove <address> – remove token\n"
         "/list – list tracked tokens\n"
         "/reset – reset alerts\n"
@@ -199,7 +205,7 @@ async def commands(msg: types.Message):
 # /start
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
-    await msg.answer("Bot started. Add tokens using /add <address>.")
+    await msg.answer("Bot started. Add tokens using /add <address_or_link>.")
     asyncio.create_task(monitor(msg.chat.id))
 
 async def main():
@@ -207,6 +213,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
