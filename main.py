@@ -25,11 +25,18 @@ async def monitor(chat_id):
         for address, token in TOKENS.items():
             price = await get_price(address)
 
-            if token["last_price"] is None:
-                token["last_price"] = price
+            # Если ATH ещё не установлен — ставим текущую цену как ATH
+            if token["ath"] is None:
+                token["ath"] = price
                 continue
 
-            drop = (token["last_price"] - price) / token["last_price"]
+            # Если цена выросла выше ATH — обновляем ATH
+            if price > token["ath"]:
+                token["ath"] = price
+                token["triggered"] = set()  # сбрасываем алерты
+
+            # Падение от ATH
+            drop = (token["ath"] - price) / token["ath"]
 
             for threshold in token["alerts"]:
                 if drop >= threshold and threshold not in token["triggered"]:
@@ -37,12 +44,10 @@ async def monitor(chat_id):
 
                     await bot.send_message(
                         chat_id,
-                        f"⚠️ Токен {address} упал на {int(threshold*100)}%\n"
-                        f"Цена была: {token['last_price']}\n"
-                        f"Текущая: {price}"
+                        f"⚠️ Токен {address} упал на {int(threshold*100)}% от ATH\n"
+                        f"ATH: {token['ath']}\n"
+                        f"Текущая цена: {price}"
                     )
-
-            token["last_price"] = price
 
         await asyncio.sleep(10)
 
@@ -52,12 +57,12 @@ async def add_token(msg: types.Message):
         address = msg.text.split()[1]
 
         TOKENS[address] = {
-            "last_price": None,
+            "ath": None,  # ATH будет установлено автоматически
             "alerts": [0.60, 0.65, 0.70, 0.80],
             "triggered": set()
         }
 
-        await msg.answer(f"Токен добавлен!\nНачинаю отслеживать: {address}")
+        await msg.answer(f"Токен добавлен!\nНачинаю отслеживать падение от ATH: {address}")
     except:
         await msg.answer("Использование:\n/add <contract_address>")
 
@@ -68,8 +73,8 @@ async def list_tokens(msg: types.Message):
         return
 
     text = "Отслеживаемые токены:\n\n"
-    for address in TOKENS:
-        text += f"• {address}\n"
+    for address, token in TOKENS.items():
+        text += f"• {address} (ATH: {token['ath']})\n"
 
     await msg.answer(text)
 
@@ -83,4 +88,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
