@@ -9,36 +9,25 @@ dp = Dispatcher(bot)
 
 TOKENS = {}
 
-DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/"
+DEX_PAIRS_URL = "https://api.dexscreener.com/latest/dex/pairs/robinhood/"
 
-# Fetch best pair from DexScreener
-async def fetch_best_pair(address):
+# Fetch pair data from DexScreener PAIRS API (Robinhood)
+async def fetch_pair(pair_address):
     async with aiohttp.ClientSession() as session:
-        async with session.get(DEX_URL + address) as resp:
+        async with session.get(DEX_PAIRS_URL + pair_address) as resp:
             data = await resp.json()
 
     if "pairs" not in data or not data["pairs"]:
         return None
 
-    pairs = data["pairs"]
-
-    # Sort by liquidity, volume, holders
-    pairs.sort(
-        key=lambda p: (
-            p.get("liquidity", 0),
-            p.get("volume", 0),
-            p.get("holders", 0)
-        ),
-        reverse=True
-    )
-
-    return pairs[0]
+    # PAIRS API returns exactly one pair for this endpoint
+    return data["pairs"][0]
 
 # Monitoring loop
 async def monitor(chat_id):
     while True:
-        for address, token in TOKENS.items():
-            pair = await fetch_best_pair(address)
+        for pair_address, token in TOKENS.items():
+            pair = await fetch_pair(pair_address)
             if not pair:
                 continue
 
@@ -67,7 +56,7 @@ async def monitor(chat_id):
 
             for threshold in token["alerts"]:
 
-                # AUTO-REARM
+                # AUTO-REARM: if marketcap recovered above threshold
                 if drop < threshold and threshold in token["triggered"]:
                     token["triggered"].remove(threshold)
 
@@ -79,8 +68,8 @@ async def monitor(chat_id):
 
                     keyboard = types.InlineKeyboardMarkup()
                     keyboard.add(
-                        types.InlineKeyboardButton("Re-arm", callback_data=f"rearm_{address}"),
-                        types.InlineKeyboardButton("Delete", callback_data=f"delete_{address}")
+                        types.InlineKeyboardButton("Re-arm", callback_data=f"rearm_{pair_address}"),
+                        types.InlineKeyboardButton("Delete", callback_data=f"delete_{pair_address}")
                     )
 
                     await bot.send_message(
@@ -96,18 +85,18 @@ async def monitor(chat_id):
 # CALLBACKS
 @dp.callback_query_handler(lambda c: c.data.startswith("rearm_"))
 async def rearm_alert(call: types.CallbackQuery):
-    address = call.data.split("_")[1]
-    if address in TOKENS:
-        TOKENS[address]["triggered"] = set()
-        await call.message.answer(f"Alerts re-armed for {TOKENS[address]['name']}.")
+    pair_address = call.data.split("_")[1]
+    if pair_address in TOKENS:
+        TOKENS[pair_address]["triggered"] = set()
+        await call.message.answer(f"Alerts re-armed for {TOKENS[pair_address]['name']}.")
     await call.answer()
 
 @dp.callback_query_handler(lambda c: c.data.startswith("delete_"))
 async def delete_token(call: types.CallbackQuery):
-    address = call.data.split("_")[1]
-    if address in TOKENS:
-        name = TOKENS[address]["name"]
-        del TOKENS[address]
+    pair_address = call.data.split("_")[1]
+    if pair_address in TOKENS:
+        name = TOKENS[pair_address]["name"]
+        del TOKENS[pair_address]
         await call.message.answer(f"Token {name} deleted.")
     await call.answer()
 
@@ -117,30 +106,33 @@ async def add_token(msg: types.Message):
     parts = msg.text.split()
 
     if len(parts) < 2:
-        await msg.answer("Usage:\n/add <contract_or_link>")
+        await msg.answer("Usage:\n/add <dexscreener_link_or_pair_address>")
         return
 
     raw = parts[1]
 
-    # If user sends DexScreener link — extract contract
+    # If user sends DexScreener link — extract pairAddress
     if "dexscreener.com" in raw:
         try:
-            address = raw.split("/")[-1]
+            pair_address = raw.split("/")[-1]
         except:
             await msg.answer("Invalid DexScreener link.")
             return
     else:
-        address = raw
+        pair_address = raw
 
-    pair = await fetch_best_pair(address)
+    pair = await fetch_pair(pair_address)
     if not pair:
-        await msg.answer("Token not found on DexScreener.")
+        await msg.answer("Pair not found on DexScreener (Robinhood).")
         return
 
-    name = pair["baseToken"]["name"]
+    base = pair.get("baseToken", {})
+    name = base.get("name", "Unknown")
+    contract = base.get("address", pair_address)
 
-    TOKENS[address] = {
+    TOKENS[pair_address] = {
         "name": name,
+        "contract": contract,
         "ath_mc": None,
         "alerts": [0.60, 0.65, 0.70, 0.80],
         "triggered": set()
@@ -149,7 +141,8 @@ async def add_token(msg: types.Message):
     await msg.answer(
         f"Added token:\n"
         f"Name: {name}\n"
-        f"Contract: {address}\n"
+        f"Contract: {contract}\n"
+        f"Pair: {pair_address}\n"
         f"Tracking MarketCap drops."
     )
 
@@ -158,14 +151,14 @@ async def add_token(msg: types.Message):
 async def remove_token(msg: types.Message):
     parts = msg.text.split()
     if len(parts) < 2:
-        await msg.answer("Usage:\n/remove <contract_address>")
+        await msg.answer("Usage:\n/remove <pair_address>")
         return
 
-    address = parts[1]
+    pair_address = parts[1]
 
-    if address in TOKENS:
-        name = TOKENS[address]["name"]
-        del TOKENS[address]
+    if pair_address in TOKENS:
+        name = TOKENS[pair_address]["name"]
+        del TOKENS[pair_address]
         await msg.answer(f"Token {name} removed.")
     else:
         await msg.answer("Token not found.")
@@ -185,8 +178,8 @@ async def list_tokens(msg: types.Message):
         return
 
     text = "Tracked tokens:\n\n"
-    for address, token in TOKENS.items():
-        text += f"• {token['name']} (ATH MC: {token['ath_mc']})\n"
+    for pair_address, token in TOKENS.items():
+        text += f"• {token['name']} (Pair: {pair_address}, ATH MC: {token['ath_mc']})\n"
 
     await msg.answer(text)
 
@@ -195,8 +188,8 @@ async def list_tokens(msg: types.Message):
 async def commands(msg: types.Message):
     await msg.answer(
         "/start – start monitoring\n"
-        "/add <address_or_link> – add token\n"
-        "/remove <address> – remove token\n"
+        "/add <dexscreener_link_or_pair> – add token\n"
+        "/remove <pair> – remove token\n"
         "/list – list tracked tokens\n"
         "/reset – reset alerts\n"
         "/commands – show all commands\n"
@@ -205,7 +198,7 @@ async def commands(msg: types.Message):
 # /start
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
-    await msg.answer("Bot started. Add tokens using /add <address_or_link>.")
+    await msg.answer("Bot started. Add tokens using /add <dexscreener_link_or_pair>.")
     asyncio.create_task(monitor(msg.chat.id))
 
 async def main():
@@ -213,6 +206,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
