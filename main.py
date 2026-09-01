@@ -51,13 +51,16 @@ async def monitor(chat_id):
 
         await asyncio.sleep(10)
 
+# -----------------------------
+#        КОМАНДА /add
+# -----------------------------
 @dp.message_handler(commands=["add"])
 async def add_token(msg: types.Message):
     try:
         address = msg.text.split()[1]
 
         TOKENS[address] = {
-            "ath": None,  # ATH будет установлено автоматически
+            "ath": None,
             "alerts": [0.60, 0.65, 0.70, 0.80],
             "triggered": set()
         }
@@ -66,6 +69,9 @@ async def add_token(msg: types.Message):
     except:
         await msg.answer("Использование:\n/add <contract_address>")
 
+# -----------------------------
+#        КОМАНДА /list
+# -----------------------------
 @dp.message_handler(commands=["list"])
 async def list_tokens(msg: types.Message):
     if not TOKENS:
@@ -78,6 +84,49 @@ async def list_tokens(msg: types.Message):
 
     await msg.answer(text)
 
+# -----------------------------
+#        КОМАНДА /remove
+# -----------------------------
+@dp.message_handler(commands=["remove"])
+async def remove_token(msg: types.Message):
+    try:
+        address = msg.text.split()[1]
+
+        if address in TOKENS:
+            del TOKENS[address]
+            await msg.answer(f"Токен {address} удалён из отслеживания.")
+        else:
+            await msg.answer("Такого токена нет в списке.")
+    except:
+        await msg.answer("Использование:\n/remove <contract_address>")
+
+# -----------------------------
+#        КОМАНДА /reset
+# -----------------------------
+@dp.message_handler(commands=["reset"])
+async def reset_alerts(msg: types.Message):
+    for token in TOKENS.values():
+        token["triggered"] = set()
+    await msg.answer("Все алерты сброшены!")
+
+# -----------------------------
+#        КОМАНДА /commands
+# -----------------------------
+@dp.message_handler(commands=["commands"])
+async def commands(msg: types.Message):
+    text = (
+        "/start – запустить бота\n"
+        "/add <address> – добавить токен\n"
+        "/remove <address> – удалить токен\n"
+        "/list – список токенов\n"
+        "/reset – сбросить алерты\n"
+        "/commands – список всех команд\n"
+    )
+    await msg.answer(text)
+
+# -----------------------------
+#        КОМАНДА /start
+# -----------------------------
 @dp.message_handler(commands=["start"])
 async def start(msg: types.Message):
     await msg.answer("Бот запущен! Кидай контракты через /add <address>")
